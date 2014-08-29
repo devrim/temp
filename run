@@ -1,0 +1,3 @@
+#!/bin/bash
+
+./watch-coffee `pwd`/server.coffee
