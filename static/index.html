@@ -11,10 +11,11 @@
 <script src="http://cdnjs.cloudflare.com/ajax/libs/highlight.js/8.2/highlight.min.js"></script>
 <script>hljs.initHighlightingOnLoad();</script>
 <script type="text/javascript" src="/static/jquery.min.js"></script>
+<script type="text/javascript" src="/static/diff_match_patch.js"></script>
 <script type="text/javascript" src="/static/peer.js"></script>
 <script type="text/javascript" src="/static/jquery.cookie.js"></script>
 <script type="text/javascript" src="/static/underscore-min.js"></script>
-<script type="text/javascript" src="/static/traverse.js"></script>
+<!-- <script type="text/javascript" src="/static/traverse.js"></script> -->
 <script type="text/javascript" src="/static/main.js"></script>
 </head>
 
@@ -24,15 +25,23 @@
     <span id="pid"></span><br>
 </div>
 
-  <div id="wrap"><div id="connections">
-    <span class="filler">No one is here yet.</span>
-  </div>
+  <div id="wrap">
+    <div id="connections">
+      <span class="filler">No one is here yet.</span><textarea id="shared" rows="20" cols="50"></textarea
+    </div>
     <div class="clear"></div>
+    <div>
+      <!-- > -->
+    </div>
+
   </div>
 
     <form id="send">
       <input type="text" id="text" placeholder="Enter message"><input class="button" type="submit" value="Send">
     </form>
+
+
+
  <!-- <script type="text/javascript" src="/static/coffee-script.js"></script> -->
 </body>
 </html>

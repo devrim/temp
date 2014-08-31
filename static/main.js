@@ -1,8 +1,18 @@
 (function() {
-  var DB, KDEventEmitter, after, broadcast, connect, connectToChannel, connectToPeer, connectToPeers, connectedPeers, db, every, peer, peerid, peers, publicChannel,
+  var DB, KDEventEmitter, MY_ID, P2P, after, browserEvents, every, i, log, p2p, publicChannel, warn,
     __slice = [].slice,
     __hasProp = {}.hasOwnProperty,
     __extends = function(child, parent) { for (var key in parent) { if (__hasProp.call(parent, key)) child[key] = parent[key]; } function ctor() { this.constructor = child; } ctor.prototype = parent.prototype; child.prototype = new ctor(); child.__super__ = parent.prototype; return child; };
+
+  log = console.log.bind(console);
+
+  warn = console.warn.bind(console);
+
+  MY_ID = null;
+
+  browserEvents = ["abort", "afterprint", "beforeprint", "beforeunload", "blur", "canplay", "canplaythrough", "change", "click", "contextmenu", "copy", "cuechange", "cut", "dblclick", "DOMContentLoaded", "drag", "dragend", "dragenter", "dragleave", "dragover", "dragstart", "drop", "durationchange", "emptied", "ended", "error", "focus", "focusin", "focusout", "formchange", "forminput", "hashchange", "input", "invalid", "keydown", "keypress", "keyup", "load", "loadeddata", "loadedmetadata", "loadstart", "message", "mousedown", "mouseenter", "mouseleave", "mousemove", "mouseout", "mouseover", "mouseup", "mousewheel", "offline", "online", "pagehide", "pageshow", "paste", "pause", "play", "playing", "popstate", "progress", "ratechange", "readystatechange", "redo", "reset", "resize", "scroll", "seeked", "seeking", "select", "show", "stalled", "storage", "submit", "suspend", "timeupdate", "undo", "unload", "volumechange", "waiting"];
+
+  i = 0;
 
   KDEventEmitter = (function() {
     var _off, _on, _registerEvent, _unregisterEvent;
@@ -157,8 +167,6 @@
 
   })();
 
-  peers = {};
-
   DB = (function(_super) {
     var Db, mergeRecursive;
 
@@ -198,15 +206,18 @@
       return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds(), now.getUTCMilliseconds());
     };
 
-    DB.prototype.set = function(conn, data) {
-      Db.messages.push({
-        peer: conn.peer,
-        msg: data,
-        at: this.utcTime(),
-        dt: conn.dt
-      });
-      broadcast(msg);
-      return this.updateView();
+    DB.prototype.set = function(meta, data) {
+      var obj;
+      obj = {
+        peer: meta.peer || p2p.peerid,
+        data: data,
+        dept: meta.dept || this.utcTime(),
+        arrv: meta.arrv || this.utcTime(),
+        path: meta.path || window.location.pathname
+      };
+      Db.messages.push(obj);
+      this.updateView();
+      return obj;
     };
 
     DB.prototype.all = function() {
@@ -228,13 +239,185 @@
 
   })(KDEventEmitter);
 
-  db = new DB;
+  P2P = (function() {
+    var broadcastCount, connectedPeers, lastBroadcast;
 
-  window.db = db;
+    connectedPeers = {};
 
-  db.on("update", function(data) {
-    return console.log(data);
+    function P2P(options, callback) {
+      this.db = new DB;
+      this.peerid = null;
+      this.peer = null;
+      this.peers = {};
+      this.throttledBroadcast = _.throttle(this.broadcast, 50);
+      this.db.on("update", function(data) {
+        return console.log(data);
+      });
+    }
+
+    P2P.prototype.join = function(options, callback) {
+      this.peer = new Peer({
+        debug: 0,
+        host: window.location.hostname,
+        port: window.location.port,
+        path: "/-/ps",
+        allow_discovery: true
+      });
+      console.log(this.peer);
+      this.peer.on("open", (function(_this) {
+        return function(id) {
+          MY_ID = id;
+          log({
+            MY_ID: MY_ID
+          });
+          _this.peerid = id;
+          $("#pid").text("hi " + id);
+          return _this.fetchPeers({}, function(err, peers) {
+            console.log("peers:", peers);
+            _this.peers = peers;
+            return _this.connectToPeers(peers);
+          });
+        };
+      })(this));
+      this.peer.on("connection", this.connect);
+      this.peer.on("error", function(err) {
+        if (err.type === "unavailable-id") {
+          console.log("unavailable-id", arguments);
+        } else if (err.type === "socket-closed") {
+          console.log("||socket-closed||");
+        } else if (err.type === "network") {
+          console.log("---> going down...");
+          after(3, location.reload.bind(location));
+        }
+        return console.log("--->", err.type);
+      });
+      this.peer.on("close", function() {
+        return console.log("connection closed...");
+      });
+      return this.peer.on("disconnect", function() {
+        return console.log("i am disconnected...");
+      });
+    };
+
+    P2P.prototype.fetchPeers = function(options, callback) {
+      return $.ajax({
+        url: "/peers",
+        dataType: "json",
+        success: function(data) {
+          return callback(null, data);
+        }
+      });
+    };
+
+    broadcastCount = 0;
+
+    lastBroadcast = Date.now();
+
+    P2P.prototype.broadcast = function(obj) {
+      var _peer, _peerid, _results;
+      _results = [];
+      for (_peerid in connectedPeers) {
+        _peer = connectedPeers[_peerid];
+        if (_peer.send && obj.peer !== _peerid) {
+          _results.push(_peer.send(JSON.stringify(obj)));
+        }
+      }
+      return _results;
+    };
+
+    P2P.prototype.connectToPeer = function(requestedPeer) {
+      var c;
+      if (!connectedPeers[requestedPeer]) {
+        c = this.peer.connect(requestedPeer, {
+          label: "chat",
+          serialization: "json",
+          metadata: {
+            message: "hi i want to chat with you!"
+          }
+        });
+        c.on("open", (function(_this) {
+          return function() {
+            return _this.connect(c, requestedPeer);
+          };
+        })(this));
+        c.on("error", function(err) {
+          return alert(err);
+        });
+      }
+      return connectedPeers[requestedPeer] = 1;
+    };
+
+    P2P.prototype.connectToPeers = function(peers) {
+      var info, peer, _ref, _results;
+      console.log("connecting to:", peers);
+      _ref = this.peers;
+      _results = [];
+      for (peer in _ref) {
+        info = _ref[peer];
+        console.log("connecting to:", peer);
+        _results.push(this.connectToPeer(peer));
+      }
+      return _results;
+    };
+
+    P2P.prototype.connect = function(c) {
+      c.on("data", function(msg) {
+        var a, clickedElement, obj;
+        obj = JSON.parse(msg);
+        if (MY_ID === obj.peer) {
+          return;
+        }
+        if (obj.data.type !== "mousemove") {
+          console.log("got " + obj.data.type + " from:", obj.peer, "at:", obj.data.pageX, obj.data.pageY);
+        }
+        if (obj.type === "event") {
+          switch (obj.data.type) {
+            case "mousemove":
+              if (!$(".pointer." + obj.peer).length) {
+                $("body").append("<div class='pointer " + obj.peer + "'>" + obj.peer + "</div>");
+              }
+              return $(".pointer." + obj.peer).css({
+                top: obj.data.pageY,
+                left: obj.data.pageX
+              });
+            case "click":
+              a = 2;
+              clickedElement = document.elementFromPoint(obj.data.pageX, obj.data.pageY);
+              $(clickedElement).trigger("click", p2p.peerid);
+              return console.log(clickedElement);
+            case "focusin":
+              a = 2;
+              clickedElement = document.elementFromPoint(obj.data.pageX, obj.data.pageY);
+              console.log(clickedElement);
+              return $(clickedElement).trigger("focus", p2p.peerid);
+          }
+        } else {
+          return this.db.set({
+            peer: obj.peer,
+            dept: obj.dept,
+            arrv: this.db.utcTime(),
+            path: obj.path
+          }, obj.data);
+        }
+      });
+      c.on("close", function() {
+        console.log("" + c.peer + " has left the chat.");
+        return delete connectedPeers[c.peer];
+      });
+      return connectedPeers[c.peer] = c;
+    };
+
+    return P2P;
+
+  })();
+
+  p2p = new P2P;
+
+  log({
+    MY_ID: MY_ID
   });
+
+  p2p.join();
 
   after = function(t, fn) {
     return setTimeout(fn, t * 1000);
@@ -244,117 +427,10 @@
     return setInterval(fn, t * 1000);
   };
 
-  broadcast = function(msg) {
-    var _peer, _peerid, _results;
-    _results = [];
-    for (_peerid in connectedPeers) {
-      _peer = connectedPeers[_peerid];
-      if (_peer.send) {
-        _results.push(_peer.send(msg));
-      }
-    }
-    return _results;
-  };
-
-  connectToChannel = function() {
-    var a;
-    return a = connectToPeer(window.location.href);
-  };
-
-  connectToPeer = function(requestedPeer) {
-    var c;
-    if (!connectedPeers[requestedPeer]) {
-      c = peer.connect(requestedPeer, {
-        label: "chat",
-        serialization: "none",
-        metadata: {
-          message: "hi i want to chat with you!"
-        }
-      });
-      c.on("open", function() {
-        return connect(c, requestedPeer);
-      });
-      c.on("error", function(err) {
-        return alert(err);
-      });
-    }
-    return connectedPeers[requestedPeer] = 1;
-  };
-
-  connectToPeers = function(peers) {
-    var p, _i, _len, _results;
-    console.log("peers", $.cookie("peers"));
-    peers || (peers = $.cookie("peers").split(","));
-    _results = [];
-    for (_i = 0, _len = peers.length; _i < _len; _i++) {
-      p = peers[_i];
-      console.log("connecting to:", p);
-      _results.push(connectToPeer(p));
-    }
-    return _results;
-  };
-
-  connect = function(c) {
-    c.on("data", function(data) {
-      console.log(data);
-      return db.set(c, data);
-    });
-    c.on("close", function() {
-      console.log("" + c.peer + " has left the chat.");
-      if ($(".connection").length === 0) {
-        $(".filler").show();
-      }
-      return delete connectedPeers[c.peer];
-    });
-    return connectedPeers[c.peer] = c;
-  };
-
-  peerid = $.cookie("peerid");
-
-  console.log("-->:", peerid);
-
-  peer = new Peer(peerid, {
-    debug: 0,
-    host: "localhost",
-    port: 9000,
-    path: "/peerserver"
-  });
-
-  console.log(peer);
-
-  connectedPeers = {};
-
-  peer.on("open", function(id) {
-    return $("#pid").text("hi " + id + "! you are in room:" + window.location.pathname);
-  });
-
-  peer.on("connection", connect);
-
-  peer.on("error", function(err) {
-    if (err.type === "unavailable-id") {
-      console.log("unavailable-id", arguments);
-    } else if (err.type === "socket-closed") {
-      console.log("||socket-closed||");
-    } else if (err.type === "network") {
-      console.log("---> going down...");
-      after(3, location.reload.bind(location));
-    }
-    return console.log("--->", err.type);
-  });
-
-  peer.on("close", function() {
-    return console.log("connection closed...");
-  });
-
-  peer.on("disconnect", function() {
-    return console.log("i am disconnected...");
-  });
-
   window.publicChannel = publicChannel = null;
 
   $(document).ready(function() {
-    var chatbox, doNothing, header;
-    console.log("-->:", peerid, $.cookie("peerid"));
+    var chatbox, header;
     chatbox = $("<div></div>").addClass("connection").addClass("active").attr("id", "general");
     header = $("<h1></h1>").html("Chat with <strong>Public</strong>");
     window.publicChannel = publicChannel = $("<div><em>You are connected.</em></div>").addClass("messages");
@@ -363,11 +439,7 @@
     $(".filler").hide();
     $("#connections").append(chatbox);
     $("#text").html("{'a':1,'b':{'c':3}}");
-    connectToPeers();
-    doNothing = function(e) {
-      e.preventDefault();
-      return e.stopPropagation();
-    };
+    p2p.connectToPeers();
     $("#connect").click(function() {
       return connectToPeer($("#rid").val());
     });
@@ -377,14 +449,12 @@
       });
     });
     $("#send").submit(function(e) {
-      var msg;
+      var msg, obj;
       e.preventDefault();
       msg = $("#text").val();
       $("#text").focus();
-      return db.set({
-        peer: peerid,
-        dt: db.utcTime()
-      }, msg);
+      obj = p2p.db.set({}, msg);
+      return p2p.broadcast(obj);
     });
     return $("#browsers").text(navigator.userAgent);
   });

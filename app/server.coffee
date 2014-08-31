@@ -2,10 +2,12 @@ express      = require 'express'
 cookieParser = require 'cookie-parser'
 fs           = require 'fs'
 log          = console.log
-PeerServer   = require('peer').PeerServer
+PeerServer   = require('../peerjs-server').PeerServer
 eden         = require 'node-eden'
 coffee       = require 'coffee-script'
 ngrok        = require 'ngrok'
+restify      = require('../peerjs-server/node_modules/restify')
+
 
 fs.writeFileSync "./static/main.js",coffee.compile(fs.readFileSync("./app/client/main.coffee","utf8"))
 
@@ -19,56 +21,70 @@ maps =
     c2p : {}
     p2c : {}
 
-addPeerToChannel = (peerid,channel)->
-    maps.p2c[peerid] or= {}
-    maps.p2c[peerid][channel] or= {}
 
-addChannelToPeer = (peerid,channel)->
-    maps.c2p[channel] or= {}
-    maps.c2p[channel][peerid] or= {}
+peers = {}
 
-peerList = (channel)->
-    peers = (peer for peer,val of maps.c2p[channel])
-    return peers.join(",")
 
 index = fs.readFileSync "./static/index.html"
+indexLen = Buffer.byteLength(index+"")
 
-app.get "*", (req, res)->
-    res.set('Content-Type', 'text/html')
-
-
-    channel = req.params[0]
-
-    unless req.cookies.peerid
-        peerid = eden.word()
-        res.cookie "peerid", peerid
-    else
-        peerid = req.cookies.peerid
-
-    # get new id on each refresh - makes testing easier..
-    peerid = eden.word()
-    res.cookie "peerid", peerid
+defaultRoute = (req, res, next) ->
+    # peerid = eden.word()
+    # res.cookie "peerid", peerid
 
 
-    res.cookie "peers", peerList(channel)
-    log "sending peers:",peerList(channel)
-
-    addPeerToChannel peerid,channel
-    addChannelToPeer peerid,channel
-
-    console.log maps.c2p
-
-    res.send index
+    # res.cookie "peers", peerList(channel)
+    # log "sending peers:",peerList(channel)
 
 
-app.listen 3000
-ps = new PeerServer port: 9000, path: '/peerserver'
+    console.log req.params
 
-ps.on "connection",(id)->
-    # log "connected:",id
+    res.writeHead 200,
+        "Content-Length" : indexLen
+        'Content-Type'   : 'text/html'
+    res.write index
+    res.end()
+    next()
 
-ps.on "disconnect",(id)->
-    # log "disconnected:",id
+ps = new PeerServer
+    port : 3000
+    path : '/-/ps'
+    static:
+        path      : /\/static\/?.*/
+        directory : '/Users/d/Projects/peer'
+        default   : 'index.html'
+    routes :
+      [
+        {
+            type : "get"
+            path : "/peers"
+            fn   : (req,res,next)->
+                # res.writeHead 200,
+                #     'Content-Type'   : 'application/json'
+                res.send 200, peers
+
+        },
+        {
+        type : "get"
+        path : "/:all"
+        fn   : defaultRoute
+        },
+        {
+        type : "get"
+        path : "/"
+        fn   : defaultRoute
+        }
+      ]
+
+
+
+
+ps.on "connection",(peerid)->
+    log "connected:",peerid
+    peers[peerid] = ""
+ps.on "disconnect",(peerid)->
+    log "disconnected:",peerid
+    delete peers[peerid]
 
 
 # [{name:"peer",  port: 3000},{name:"peerserve",  port: 9000}].forEach (kite)->

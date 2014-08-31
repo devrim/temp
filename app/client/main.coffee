@@ -10,6 +10,110 @@
 #     ' %d listeners added. Use emitter.setMaxListeners()' +
 #     ' to increase limit.', n
 
+log = console.log.bind(console)
+warn = console.warn.bind(console)
+MY_ID = null
+browserEvents = [
+    "abort"
+    "afterprint"
+    "beforeprint"
+    "beforeunload"
+    "blur"
+    "canplay"
+    "canplaythrough"
+    "change"
+    "click"
+    "contextmenu"
+    "copy"
+    "cuechange"
+    "cut"
+    "dblclick"
+    "DOMContentLoaded"
+    "drag"
+    "dragend"
+    "dragenter"
+    "dragleave"
+    "dragover"
+    "dragstart"
+    "drop"
+    "durationchange"
+    "emptied"
+    "ended"
+    "error"
+    "focus"
+    "focusin"
+    "focusout"
+    "formchange"
+    "forminput"
+    "hashchange"
+    "input"
+    "invalid"
+    "keydown"
+    "keypress"
+    "keyup"
+    "load"
+    "loadeddata"
+    "loadedmetadata"
+    "loadstart"
+    "message"
+    "mousedown"
+    "mouseenter"
+    "mouseleave"
+    "mousemove"
+    "mouseout"
+    "mouseover"
+    "mouseup"
+    "mousewheel"
+    "offline"
+    "online"
+    "pagehide"
+    "pageshow"
+    "paste"
+    "pause"
+    "play"
+    "playing"
+    "popstate"
+    "progress"
+    "ratechange"
+    "readystatechange"
+    "redo"
+    "reset"
+    "resize"
+    "scroll"
+    "seeked"
+    "seeking"
+    "select"
+    "show"
+    "stalled"
+    "storage"
+    "submit"
+    "suspend"
+    "timeupdate"
+    "undo"
+    "unload"
+    "volumechange"
+    "waiting"
+]
+
+i=0
+
+# $(document).on browserEvents.join(" "),(e, peerid=null)->
+#     e.stopPropagation()
+#     console.log "event from:",peerid
+#     {pageX, pageY, type} = e
+#     console.log "event:",type
+
+#     # only the owner of the even should broadcast
+
+#     if peerid is null and type in ["mousemove","click", "focus", "focusin"]
+#         p2p.throttledBroadcast
+#             type : "event"
+#             data : { type, pageX, pageY }
+#             dept : p2p.db.utcTime()
+#             peer : p2p.peerid
+
+#     return yes
+
 class KDEventEmitter
 
   @registerStaticEmitter = ->
@@ -124,8 +228,6 @@ class KDEventEmitter
 
 
 
-peers = {}
-
 class DB extends KDEventEmitter
     Db  =
         strings  : []
@@ -154,13 +256,6 @@ class DB extends KDEventEmitter
         return Date.UTC(now.getUTCFullYear(),now.getUTCMonth(), now.getUTCDate(), now.getUTCHours(), now.getUTCMinutes(), now.getUTCSeconds(), now.getUTCMilliseconds())
 
 
-    set : (conn,data)->
-
-        Db.messages.push
-            peer : conn.peer
-            msg  : data
-            at   : @utcTime()
-            dt   : conn.dt
         # try
         #     json = JSON.parse data
         #     # db = _.extend db,json
@@ -175,8 +270,20 @@ class DB extends KDEventEmitter
         # catch err
         #     console.log "cannot set. invalid json.",err
 
-        broadcast msg
+    set : (meta,data)->
+
+        # data = meta unless meta
+
+        obj =
+            peer : meta.peer or p2p.peerid
+            data : data
+            dept : meta.dept or @utcTime()
+            arrv : meta.arrv or @utcTime()
+            path : meta.path or window.location.pathname
+
+        Db.messages.push obj
         @updateView()
+        return obj
 
     all : -> JSON.stringify Db,null,2
 
@@ -189,117 +296,187 @@ class DB extends KDEventEmitter
         $("#general").html("<div><pre><code class='javascript'>"+@all()+"</pre></code></div>")
 
 
+class P2P
 
-db = new DB
+    connectedPeers = {}
 
-window.db = db
+    constructor: (options,callback)->
+        @db = new DB
+        @peerid = null
+        @peer = null
+        @peers = {}
+        @throttledBroadcast = _.throttle(@broadcast, 50)
 
-db.on "update",(data)->
-    console.log data
-    # traverse(data).paths().forEach (path)->
-    #     console.log "updated: #{path}"
+        @db.on "update",(data)->
+            console.log data
+            # traverse(data).paths().forEach (path)->
+            #     console.log "updated: #{path}"
+
+    join : (options,callback)->
+        @peer = new Peer
+            # key: "x7fwx2kavpy6tj4i"
+            debug: 0
+            host: window.location.hostname
+            port: window.location.port
+            path: "/-/ps"
+            allow_discovery : yes
+
+        console.log @peer
+
+
+        @peer.on "open", (id) =>
+            MY_ID = id
+            log {MY_ID}
+            @peerid = id
+            $("#pid").text "hi "+id
+            @fetchPeers {},(err,peers)=>
+                console.log "peers:",peers
+                @peers = peers
+                @connectToPeers peers
 
 
 
+        @peer.on "connection", @connect
+
+        @peer.on "error",(err)->
+            if err.type is "unavailable-id"
+                console.log "unavailable-id",arguments
+            else if err.type is "socket-closed"
+                console.log "||socket-closed||"
+            else if err.type is "network"
+                console.log "---> going down..."
+                after 3,location.reload.bind(location)
+            console.log "--->", err.type
+
+        @peer.on "close",->
+            console.log "connection closed..."
+
+        @peer.on "disconnect",->
+            console.log "i am disconnected..."
+
+    fetchPeers: (options,callback) ->
+        $.ajax
+          url: "/peers"
+          # data: data
+          dataType: "json"
+          success: (data) ->
+            callback null, data
+
+    broadcastCount = 0
+    lastBroadcast = Date.now()
+
+
+
+
+
+    broadcast : (obj) ->
+        # console.log "#{broadcastCount++} broadcasting:",obj
+        for _peerid,_peer of connectedPeers when _peer.send and obj.peer isnt _peerid
+            _peer.send JSON.stringify obj
+
+    connectToPeer : (requestedPeer)->
+        unless connectedPeers[requestedPeer]
+            c = @peer.connect requestedPeer,
+                label         : "chat"
+                serialization : "json"
+                metadata      :
+                    message   : "hi i want to chat with you!"
+
+            c.on "open", => @connect c,requestedPeer
+            c.on "error", (err) -> alert err
+
+        connectedPeers[requestedPeer] = 1
+
+    connectToPeers : (peers)->
+        console.log "connecting to:",peers
+        for peer,info of @peers
+            console.log "connecting to:",peer
+            @connectToPeer(peer)
+
+
+    connect : (c) ->
+
+        c.on "data", (msg) ->
+
+
+            # console.log "db",@db
+            # publicChannel.append "<div><span class=\"peer\">" + c.peer + "</span>: " + data + "</div>"
+            # console.log "received:",msg
+            obj = JSON.parse msg
+
+            return  if MY_ID is obj.peer
+
+            console.log "got #{obj.data.type} from:",obj.peer,"at:", obj.data.pageX, obj.data.pageY unless obj.data.type is "mousemove"
+
+            if obj.type is "event"
+
+                switch obj.data.type
+                    when "mousemove"
+
+                        $("body").append("<div class='pointer #{obj.peer}'>#{obj.peer}</div>") unless $(".pointer.#{obj.peer}").length
+
+                        $(".pointer.#{obj.peer}").css
+                            top : obj.data.pageY
+                            left : obj.data.pageX
+
+                        # $(".pointer.#{obj.peer}").animate
+                        #     top : obj.data.pageY
+                        #     left : obj.data.pageX
+                        # ,100
+
+                    when "click"
+                        a = 2
+                        # a = $().trigger(obj.data.type,obj.peer)
+                        clickedElement = document.elementFromPoint(obj.data.pageX, obj.data.pageY)
+                        $(clickedElement).trigger("click",p2p.peerid)
+                        console.log clickedElement
+
+                    when "focusin"
+                        a = 2
+                        # a = $().trigger(obj.data.type,obj.peer)
+                        clickedElement = document.elementFromPoint(obj.data.pageX, obj.data.pageY)
+                        console.log clickedElement
+                        $(clickedElement).trigger("focus",p2p.peerid)
+
+
+            else
+                @db.set
+                    peer : obj.peer
+                    dept : obj.dept
+                    arrv : @db.utcTime()
+                    path : obj.path
+                ,obj.data
+
+            # scrollDown()
+
+        c.on "close", ->
+            console.log  "#{c.peer} has left the chat."
+            delete connectedPeers[c.peer]
+
+        connectedPeers[c.peer] = c
+        # console.log connectedPeers
+
+
+
+p2p = new P2P
+
+
+log {MY_ID}
+p2p.join()
 
 after = (t,fn) -> setTimeout fn,t*1000
 every = (t,fn) -> setInterval(fn,t*1000)
 
 
-broadcast = (msg) ->
-    _peer.send msg for _peerid,_peer of connectedPeers when _peer.send
 
 
 
-connectToChannel = ->
-    a = connectToPeer window.location.href
-
-connectToPeer = (requestedPeer)->
-    unless connectedPeers[requestedPeer]
-        c = peer.connect requestedPeer,
-            label         : "chat"
-            serialization : "none"
-            metadata      :
-                message   : "hi i want to chat with you!"
-
-        c.on "open", -> connect c,requestedPeer
-        c.on "error", (err) -> alert err
-
-    connectedPeers[requestedPeer] = 1
-
-connectToPeers = (peers)->
-    console.log "peers", $.cookie("peers")
-    peers or= $.cookie("peers").split(",")
-    for p in peers
-        console.log "connecting to:",p
-        connectToPeer(p)
-
-connect = (c) ->
-
-    c.on "data", (data) ->
-        # publicChannel.append "<div><span class=\"peer\">" + c.peer + "</span>: " + data + "</div>"
-        console.log data
-
-        db.set c,data
-
-        # scrollDown()
-
-    c.on "close", ->
-        console.log  "#{c.peer} has left the chat."
-        # chatbox.remove()
-        $(".filler").show()    if $(".connection").length is 0
-        delete connectedPeers[c.peer]
-
-    connectedPeers[c.peer] = c
-    # console.log connectedPeers
-
-
-
-peerid = $.cookie("peerid")
-console.log "-->:",peerid
-peer = new Peer peerid,
-    # key: "x7fwx2kavpy6tj4i"
-    debug: 0
-    # host: "peerserve-devrim.ngrok.com"
-    host: "localhost"
-    port: 9000
-    path: "/peerserver"
-
-console.log peer
-
-connectedPeers = {}
-
-peer.on "open", (id) -> $("#pid").text "hi "+id+"! you are in room:"+window.location.pathname
-
-peer.on "connection", connect
-
-peer.on "error",(err)->
-    if err.type is "unavailable-id"
-        console.log "unavailable-id",arguments
-        # $.removeCookie("peerid");
-        # TODO: make this better.
-        # _.after 5, window.location.reload
-    else if err.type is "socket-closed"
-        console.log "||socket-closed||"
-        # _.after 5, window.location.reload
-    else if err.type is "network"
-        console.log "---> going down..."
-        after 3,location.reload.bind(location)
-
-
-
-    console.log "--->", err.type
-
-peer.on "close",->
-    console.log "connection closed..."
-
-peer.on "disconnect",->
-    console.log "i am disconnected..."
+# peerid = $.cookie("peerid")
+# console.log "-->:",peerid
 
 
 window.publicChannel = publicChannel = null
 $(document).ready ->
-    console.log "-->:",peerid,$.cookie("peerid")
     chatbox       = $("<div></div>").addClass("connection").addClass("active").attr("id", "general")
     header        = $("<h1></h1>").html("Chat with <strong>Public</strong>")
     window.publicChannel = publicChannel = $("<div><em>You are connected.</em></div>").addClass("messages")
@@ -309,9 +486,9 @@ $(document).ready ->
     $("#connections").append chatbox
     $("#text").html "{'a':1,'b':{'c':3}}"
 
-    connectToPeers()
+    p2p.connectToPeers()
 
-    doNothing = (e) -> e.preventDefault(); e.stopPropagation();
+    # doNothing = (e) -> e.preventDefault(); e.stopPropagation();
 
     $("#connect").click -> connectToPeer $("#rid").val()
 
@@ -324,11 +501,8 @@ $(document).ready ->
         $("#text").focus()
 
         # publicChannel.append "<div><span class=\"you\">You: </span>" + msg + "</div>"
-        db.set
-            peer : peerid
-            dt   : db.utcTime()
-        ,msg
-
+        obj = p2p.db.set {}, msg
+        p2p.broadcast obj
 
     # Show browser version
     $("#browsers").text navigator.userAgent
