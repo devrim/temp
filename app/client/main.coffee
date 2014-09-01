@@ -97,22 +97,26 @@ browserEvents = [
 
 i=0
 
-# $(document).on browserEvents.join(" "),(e, peerid=null)->
-#     e.stopPropagation()
-#     console.log "event from:",peerid
-#     {pageX, pageY, type} = e
-#     console.log "event:",type
+$(document).on browserEvents.join(" "),(e, peerid=null)->
+    e.stopPropagation()
+    console.log "event from:",peerid
+    {pageX, pageY, type} = e
+    console.log "event:",type
 
-#     # only the owner of the even should broadcast
+    if e.srcElement?.offsetTop
+        pageY = e.srcElement.offsetTop
+        pageX = e.srcElement.offsetLeft
 
-#     if peerid is null and type in ["mousemove","click", "focus", "focusin"]
-#         p2p.throttledBroadcast
-#             type : "event"
-#             data : { type, pageX, pageY }
-#             dept : p2p.db.utcTime()
-#             peer : p2p.peerid
+    # only the owner of the even should broadcast
 
-#     return yes
+    if peerid is null and type in ["mousemove","click", "focus", "focusin"]
+        p2p.throttledBroadcast
+            type : "event"
+            data : { type, pageX, pageY }
+            dept : p2p.db.utcTime()
+            peer : p2p.peerid
+
+    return yes
 
 class KDEventEmitter
 
@@ -436,7 +440,11 @@ class P2P
                         # a = $().trigger(obj.data.type,obj.peer)
                         clickedElement = document.elementFromPoint(obj.data.pageX, obj.data.pageY)
                         console.log clickedElement
-                        $(clickedElement).trigger("focus",p2p.peerid)
+
+                        setTimeout ->
+                            log 'triggerin focus'
+                            $(clickedElement).trigger("focus", p2p.peerid)
+                        , 10
 
 
             else
